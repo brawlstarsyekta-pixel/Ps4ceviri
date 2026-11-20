@@ -1,0 +1,942 @@
+=====DOSYA: settings.gradle.kts=====
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "PS4Ceviri"
+include(":app")
+=====DOSYA: build.gradle.kts=====
+plugins {
+    id("com.android.application") version "8.5.2" apply false
+    id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+}
+=====DOSYA: gradle.properties=====
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+android.useAndroidX=true
+kotlin.code.style=official
+=====DOSYA: app/build.gradle.kts=====
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "com.example.ps4ceviri"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "com.example.ps4ceviri"
+        minSdk = 26
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.google.mlkit:translate:17.0.3")
+}
+=====DOSYA: app/src/main/AndroidManifest.xml=====
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="true"
+        android:label="PS4 Çeviri"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+    </application>
+
+</manifest>
+=====DOSYA: app/src/main/java/com/example/ps4ceviri/MainActivity.kt=====
+package com.example.ps4ceviri
+
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.widget.Button
+import android.widget.CheckBox
+import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+
+class MainActivity : AppCompatActivity() {
+
+    private val projectionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+            val data = res.data
+            if (res.resultCode == RESULT_OK && data != null) {
+                val i = Intent(this, OverlayService::class.java)
+                    .putExtra("code", res.resultCode)
+                    .putExtra("data", data)
+                ContextCompat.startForegroundService(this, i)
+                Toast.makeText(
+                    this,
+                    "Başladı! Şimdi PS Remote Play'e geç",
+                    Toast.LENGTH_LONG
+                ).show()
+            } else {
+                Toast.makeText(this, "Ekran yakalama izni verilmedi", Toast.LENGTH_LONG).show()
+            }
+        }
+
+    private val notifLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            askProjection()
+        }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val prefs = getSharedPreferences("ayar", Context.MODE_PRIVATE)
+
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        fun tv(t: String, size: Float) = TextView(this).apply {
+            text = t
+            textSize = size
+            setPadding(0, dp(8), 0, dp(8))
+        }
+
+        root.addView(tv("PS4 Altyazı Çeviri", 24f))
+        root.addView(
+            tv(
+                "İngilizce → Türkçe. BAŞLAT'a bas, sonra PS Remote Play'e geç. " +
+                    "Yüzen panelden SEÇ ile altyazı alanını çiz, ÇEVİR veya OTO ile çevir.",
+                14f
+            )
+        )
+
+        root.addView(tv("Çeviri kutusu arka planı (panelden de değiştirilebilir):", 14f))
+        val group = RadioGroup(this)
+        val rbKoyu = RadioButton(this).apply { text = "Koyu" }
+        val rbSeffaf = RadioButton(this).apply { text = "Şeffaf" }
+        group.addView(rbKoyu)
+        group.addView(rbSeffaf)
+        root.addView(group)
+        if (prefs.getBoolean("koyu", true)) rbKoyu.isChecked = true else rbSeffaf.isChecked = true
+        rbKoyu.setOnClickListener { prefs.edit().putBoolean("koyu", true).apply() }
+        rbSeffaf.setOnClickListener { prefs.edit().putBoolean("koyu", false).apply() }
+
+        val cbSes = CheckBox(this).apply {
+            text = "Türkçe sesli oku (dublaj)"
+            isChecked = prefs.getBoolean("ses", true)
+            setOnCheckedChangeListener { _, checked ->
+                prefs.edit().putBoolean("ses", checked).apply()
+            }
+        }
+        root.addView(cbSes)
+
+        root.addView(Button(this).apply {
+            text = "BAŞLAT"
+            setOnClickListener { baslat() }
+        })
+        root.addView(Button(this).apply {
+            text = "DURDUR"
+            setOnClickListener { stopService(Intent(this@MainActivity, OverlayService::class.java)) }
+        })
+        root.addView(
+            tv(
+                "İpucu: izin ekranında \"Tüm ekran\" seçeneğini seç. " +
+                    "İlk açılışta çeviri modeli için internet gerekir, sonrası çevrimdışı çalışır.",
+                13f
+            )
+        )
+
+        setContentView(ScrollView(this).apply { addView(root) })
+
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val b = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(dp(16), b.top + dp(16), dp(16), b.bottom + dp(16))
+            insets
+        }
+    }
+
+    private fun baslat() {
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(
+                this,
+                "Bu uygulamaya \"diğer uygulamaların üzerinde göster\" izni ver, sonra tekrar BAŞLAT'a bas",
+                Toast.LENGTH_LONG
+            ).show()
+            startActivity(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+            )
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            askProjection()
+        }
+    }
+
+    private fun askProjection() {
+        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        projectionLauncher.launch(mpm.createScreenCaptureIntent())
+    }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+}
+=====DOSYA: app/src/main/java/com/example/ps4ceviri/OverlayService.kt=====
+package com.example.ps4ceviri
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.SharedPreferences
+import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.Rect
+import android.graphics.drawable.GradientDrawable
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
+import android.media.Image
+import android.media.ImageReader
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
+import android.os.Build
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.speech.tts.TextToSpeech
+import android.util.DisplayMetrics
+import android.view.Display
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
+import androidx.core.app.ServiceCompat
+import com.google.mlkit.common.model.DownloadConditions
+import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.Translation
+import com.google.mlkit.nl.translate.Translator
+import com.google.mlkit.nl.translate.TranslatorOptions
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import java.util.Locale
+
+class OverlayService : Service() {
+
+    companion object {
+        const val ACTION_STOP = "com.example.ps4ceviri.DUR"
+        private const val CHANNEL_ID = "ceviri"
+    }
+
+    private val handler = Handler(Looper.getMainLooper())
+    private lateinit var wm: WindowManager
+    private lateinit var prefs: SharedPreferences
+
+    // Ekran yakalama
+    private var projection: MediaProjection? = null
+    private var reader: ImageReader? = null
+    private var virtualDisplay: VirtualDisplay? = null
+    private var capW = 0
+    private var capH = 0
+    private var lastFrame: Bitmap? = null
+
+    // Arayüz
+    private lateinit var panel: LinearLayout
+    private lateinit var panelParams: WindowManager.LayoutParams
+    private lateinit var box: TextView
+    private lateinit var boxParams: WindowManager.LayoutParams
+    private lateinit var btnOto: TextView
+    private lateinit var btnArka: TextView
+    private lateinit var btnSes: TextView
+    private var panelAdded = false
+    private var boxAdded = false
+    private var boxVisible = false
+    private var selectionView: SelectionView? = null
+
+    // Durum
+    private var region: Rect? = null
+    private var busy = false
+    private var auto = false
+    private var lastText = ""
+    private var modelReady = false
+
+    private val recognizer by lazy {
+        TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    }
+    private val translator: Translator by lazy {
+        Translation.getClient(
+            TranslatorOptions.Builder()
+                .setSourceLanguage(TranslateLanguage.ENGLISH)
+                .setTargetLanguage(TranslateLanguage.TURKISH)
+                .build()
+        )
+    }
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+
+    private val autoRunnable = object : Runnable {
+        override fun run() {
+            if (auto) {
+                scan(false)
+                handler.postDelayed(this, 3000)
+            }
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        prefs = getSharedPreferences("ayar", Context.MODE_PRIVATE)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        startAsForeground()
+        if (projection != null) return START_NOT_STICKY
+
+        val code = intent?.getIntExtra("code", 0) ?: 0
+        val data: Intent? = if (Build.VERSION.SDK_INT >= 33) {
+            intent?.getParcelableExtra("data", Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent?.getParcelableExtra<Intent>("data")
+        }
+        if (data == null) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        val p = mpm.getMediaProjection(code, data)
+        p.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                handler.post { stopSelf() }
+            }
+        }, handler)
+        projection = p
+
+        ensureCapture()
+        buildPanel()
+        initTts()
+        prepareModel()
+        return START_NOT_STICKY
+    }
+
+    // ---------- Bildirim (zorunlu) ----------
+
+    private fun startAsForeground() {
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, "Çeviri", NotificationManager.IMPORTANCE_LOW)
+        )
+        val stopPi = PendingIntent.getService(
+            this, 0,
+            Intent(this, OverlayService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        val n = Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("PS4 Çeviri çalışıyor")
+            .setContentText("Durdurmak için dokun")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentIntent(stopPi)
+            .build()
+        ServiceCompat.startForeground(
+            this, 1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        )
+    }
+
+    // ---------- Hazırlık ----------
+
+    private fun prepareModel() {
+        toast("Çeviri modeli hazırlanıyor (ilk seferde internet gerekir)")
+        translator.downloadModelIfNeeded(DownloadConditions.Builder().build())
+            .addOnSuccessListener {
+                modelReady = true
+                toast("Hazır! SEÇ ile altyazı alanını belirle")
+            }
+            .addOnFailureListener {
+                toast("Model indirilemedi, internet bağlantısını kontrol et")
+            }
+    }
+
+    private fun initTts() {
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                val r = tts?.setLanguage(Locale("tr", "TR"))
+                ttsReady = r != null &&
+                    r != TextToSpeech.LANG_MISSING_DATA &&
+                    r != TextToSpeech.LANG_NOT_SUPPORTED
+                if (!ttsReady) {
+                    toast("Türkçe ses verisi yok: Ayarlar > Metin okuma bölümünden Türkçe'yi yükle")
+                }
+            }
+        }
+    }
+
+    // ---------- Panel ve kutu ----------
+
+    private fun buildPanel() {
+        panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xCC202020.toInt())
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        val handle = label("≡ TAŞI")
+        panel.addView(handle)
+        panel.addView(label("SEÇ") { startSelection() })
+        panel.addView(label("ÇEVİR") { scan(true) })
+        btnOto = label("") { toggleAuto() }
+        panel.addView(btnOto)
+        btnArka = label("") { toggleBg() }
+        panel.addView(btnArka)
+        btnSes = label("") { toggleSound() }
+        panel.addView(btnSes)
+        panel.addView(label("✕ KAPAT") { stopSelf() })
+        refreshLabels()
+
+        panelParams = overlayParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            touchable = true
+        ).apply {
+            x = dp(8)
+            y = dp(60)
+        }
+        wm.addView(panel, panelParams)
+        panelAdded = true
+
+        // Paneli sürükleme
+        handle.setOnTouchListener(object : View.OnTouchListener {
+            var startX = 0
+            var startY = 0
+            var touchX = 0f
+            var touchY = 0f
+            override fun onTouch(v: View, e: MotionEvent): Boolean {
+                when (e.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        startX = panelParams.x
+                        startY = panelParams.y
+                        touchX = e.rawX
+                        touchY = e.rawY
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        panelParams.x = startX + (e.rawX - touchX).toInt()
+                        panelParams.y = startY + (e.rawY - touchY).toInt()
+                        wm.updateViewLayout(panel, panelParams)
+                    }
+                }
+                return true
+            }
+        })
+
+        // Çeviri kutusu (dokunmayı geçirir, oyunu engellemez)
+        box = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 20f
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            setShadowLayer(4f, 0f, 0f, Color.BLACK)
+            visibility = View.GONE
+        }
+        boxParams = overlayParams(
+            dp(300),
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            touchable = false
+        )
+    }
+
+    private fun label(text: String, onClick: (() -> Unit)? = null): TextView {
+        return TextView(this).apply {
+            this.text = text
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setBackgroundColor(0xFF404040.toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, dp(2), 0, dp(2)) }
+            if (onClick != null) setOnClickListener { onClick() }
+        }
+    }
+
+    private fun overlayParams(w: Int, h: Int, touchable: Boolean): WindowManager.LayoutParams {
+        var flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        if (!touchable) flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        return WindowManager.LayoutParams(
+            w, h,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            flags,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            if (Build.VERSION.SDK_INT >= 28) {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+    }
+
+    private fun refreshLabels() {
+        btnOto.text = if (auto) "OTO: AÇIK" else "OTO: KAPALI"
+        btnArka.text = if (prefs.getBoolean("koyu", true)) "ARKA: KOYU" else "ARKA: ŞEFFAF"
+        btnSes.text = if (prefs.getBoolean("ses", true)) "SES: AÇIK" else "SES: KAPALI"
+    }
+
+    private fun toggleAuto() {
+        if (!auto && region == null) {
+            toast("Önce SEÇ ile altyazı alanını belirle")
+            return
+        }
+        auto = !auto
+        refreshLabels()
+        handler.removeCallbacks(autoRunnable)
+        if (auto) handler.post(autoRunnable)
+    }
+
+    private fun toggleBg() {
+        prefs.edit().putBoolean("koyu", !prefs.getBoolean("koyu", true)).apply()
+        refreshLabels()
+        if (boxAdded) applyBoxStyle()
+    }
+
+    private fun toggleSound() {
+        val on = !prefs.getBoolean("ses", true)
+        prefs.edit().putBoolean("ses", on).apply()
+        if (!on) tts?.stop()
+        refreshLabels()
+    }
+
+    private fun applyBoxStyle() {
+        val koyu = prefs.getBoolean("koyu", true)
+        box.background = GradientDrawable().apply {
+            setColor(if (koyu) 0xF2000000.toInt() else 0x66000000)
+            cornerRadius = dp(8).toFloat()
+        }
+    }
+
+    // ---------- Alan seçimi ----------
+
+    private fun startSelection() {
+        if (selectionView != null) return
+        val v = SelectionView(
+            this,
+            onSelected = { rect ->
+                region = rect
+                lastText = ""
+                hideBox()
+                handler.post { closeSelection() }
+                toast("Alan seçildi. ÇEVİR'e bas veya OTO'yu aç")
+            },
+            onCancel = { handler.post { closeSelection() } }
+        )
+        selectionView = v
+        wm.addView(
+            v,
+            overlayParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                touchable = true
+            )
+        )
+    }
+
+    private fun closeSelection() {
+        selectionView?.let {
+            try {
+                wm.removeView(it)
+            } catch (e: Exception) {
+            }
+        }
+        selectionView = null
+    }
+
+    // ---------- Tarama: yakala -> oku -> çevir -> göster ----------
+
+    private fun scan(manual: Boolean) {
+        val r = region
+        if (r == null) {
+            if (manual) toast("Önce SEÇ ile altyazı alanını belirle")
+            return
+        }
+        if (!modelReady) {
+            if (manual) toast("Çeviri modeli henüz hazır değil")
+            return
+        }
+        if (busy) return
+        busy = true
+
+        // Kendi çeviri kutumuzu okumamak için yakalama sırasında gizle
+        if (boxAdded && boxVisible) box.visibility = View.INVISIBLE
+        ensureCapture()
+
+        handler.postDelayed({
+            captureFrame { full ->
+                if (boxAdded && boxVisible) box.visibility = View.VISIBLE
+                if (full == null) {
+                    busy = false
+                    if (manual) toast("Ekran görüntüsü alınamadı (Remote Play engelliyor olabilir)")
+                    return@captureFrame
+                }
+                val l = r.left.coerceIn(0, full.width - 2)
+                val t = r.top.coerceIn(0, full.height - 2)
+                val w = minOf(r.width(), full.width - l)
+                val h = minOf(r.height(), full.height - t)
+                if (w < 10 || h < 10) {
+                    busy = false
+                    return@captureFrame
+                }
+                val crop = Bitmap.createBitmap(full, l, t, w, h)
+                recognize(crop)
+            }
+        }, 250)
+    }
+
+    private fun recognize(crop: Bitmap) {
+        recognizer.process(InputImage.fromBitmap(crop, 0))
+            .addOnSuccessListener { result ->
+                val text = result.text.replace("\n", " ").replace(Regex("\\s+"), " ").trim()
+                crop.recycle()
+                if (text.length < 2) {
+                    lastText = ""
+                    hideBox()
+                    busy = false
+                    return@addOnSuccessListener
+                }
+                if (text == lastText) {
+                    busy = false
+                    return@addOnSuccessListener
+                }
+                lastText = text
+                translate(text)
+            }
+            .addOnFailureListener {
+                crop.recycle()
+                busy = false
+                toast("Okuma hatası")
+            }
+    }
+
+    private fun translate(text: String) {
+        translator.translate(text)
+            .addOnSuccessListener { tr ->
+                showTranslation(tr)
+                if (prefs.getBoolean("ses", true) && ttsReady) {
+                    tts?.speak(tr, TextToSpeech.QUEUE_FLUSH, null, "ceviri")
+                }
+                busy = false
+            }
+            .addOnFailureListener {
+                busy = false
+                toast("Çeviri hatası")
+            }
+    }
+
+    private fun showTranslation(text: String) {
+        val r = region ?: return
+        applyBoxStyle()
+        box.text = text
+        boxParams.x = r.left
+        boxParams.y = r.top
+        boxParams.width = r.width()
+        if (!boxAdded) {
+            wm.addView(box, boxParams)
+            boxAdded = true
+        } else {
+            wm.updateViewLayout(box, boxParams)
+        }
+        box.visibility = View.VISIBLE
+        boxVisible = true
+    }
+
+    private fun hideBox() {
+        boxVisible = false
+        if (boxAdded) box.visibility = View.GONE
+    }
+
+    // ---------- Ekran yakalama ----------
+
+    private fun realMetrics(): DisplayMetrics {
+        val dm = DisplayMetrics()
+        val d = (getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
+            .getDisplay(Display.DEFAULT_DISPLAY)
+        @Suppress("DEPRECATION")
+        d.getRealMetrics(dm)
+        return dm
+    }
+
+    private fun ensureCapture() {
+        val p = projection ?: return
+        val dm = realMetrics()
+        val w = dm.widthPixels
+        val h = dm.heightPixels
+        if (virtualDisplay != null && w == capW && h == capH) return
+
+        val newReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+        val vd = virtualDisplay
+        if (vd == null) {
+            virtualDisplay = p.createVirtualDisplay(
+                "ceviri", w, h, dm.densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                newReader.surface, null, null
+            )
+        } else {
+            vd.resize(w, h, dm.densityDpi)
+            vd.surface = newReader.surface
+        }
+        reader?.close()
+        reader = newReader
+        capW = w
+        capH = h
+    }
+
+    private fun captureFrame(cb: (Bitmap?) -> Unit) {
+        val r = reader
+        if (r == null) {
+            cb(null)
+            return
+        }
+        val img = try {
+            r.acquireLatestImage()
+        } catch (e: Exception) {
+            null
+        }
+        if (img != null) {
+            cb(toBitmap(img))
+            return
+        }
+        // Ekran sabitse yeni kare gelmeyebilir: bekle, olmazsa son kareyi kullan
+        var done = false
+        val timeout = Runnable {
+            if (!done) {
+                done = true
+                r.setOnImageAvailableListener(null, null)
+                cb(lastFrame)
+            }
+        }
+        r.setOnImageAvailableListener({ rd ->
+            if (!done) {
+                val i = try {
+                    rd.acquireLatestImage()
+                } catch (e: Exception) {
+                    null
+                }
+                if (i != null) {
+                    done = true
+                    handler.removeCallbacks(timeout)
+                    rd.setOnImageAvailableListener(null, null)
+                    cb(toBitmap(i))
+                }
+            }
+        }, handler)
+        handler.postDelayed(timeout, 1500)
+    }
+
+    private fun toBitmap(img: Image): Bitmap {
+        val w = img.width
+        val h = img.height
+        val plane = img.planes[0]
+        val pixelStride = plane.pixelStride
+        val rowPadding = plane.rowStride - pixelStride * w
+        val padded = Bitmap.createBitmap(w + rowPadding / pixelStride, h, Bitmap.Config.ARGB_8888)
+        padded.copyPixelsFromBuffer(plane.buffer)
+        img.close()
+        val result = if (rowPadding > 0) {
+            val cut = Bitmap.createBitmap(padded, 0, 0, w, h)
+            padded.recycle()
+            cut
+        } else {
+            padded
+        }
+        lastFrame?.recycle()
+        lastFrame = result
+        return result
+    }
+
+    // ---------- Yardımcılar ----------
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun toast(msg: String) {
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    override fun onDestroy() {
+        auto = false
+        handler.removeCallbacksAndMessages(null)
+        closeSelection()
+        try {
+            if (panelAdded) wm.removeView(panel)
+        } catch (e: Exception) {
+        }
+        try {
+            if (boxAdded) wm.removeView(box)
+        } catch (e: Exception) {
+        }
+        virtualDisplay?.release()
+        reader?.close()
+        projection?.stop()
+        tts?.shutdown()
+        translator.close()
+        recognizer.close()
+        super.onDestroy()
+    }
+}
+=====DOSYA: app/src/main/java/com/example/ps4ceviri/SelectionView.kt=====
+package com.example.ps4ceviri
+
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
+import android.view.MotionEvent
+import android.view.View
+
+/** Tam ekran yarı saydam katman: parmakla altyazı alanı çizilir. */
+class SelectionView(
+    context: Context,
+    private val onSelected: (Rect) -> Unit,
+    private val onCancel: () -> Unit
+) : View(context) {
+
+    private val dimPaint = Paint().apply { color = 0x66000000 }
+    private val fillPaint = Paint().apply { color = 0x4400FF00 }
+    private val borderPaint = Paint().apply {
+        color = Color.GREEN
+        style = Paint.Style.STROKE
+        strokeWidth = 4f
+    }
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 48f
+        textAlign = Paint.Align.CENTER
+    }
+
+    private var startX = 0f
+    private var startY = 0f
+    private var curX = 0f
+    private var curY = 0f
+    private var dragging = false
+    private val loc = IntArray(2)
+
+    override fun onDraw(canvas: Canvas) {
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), dimPaint)
+        canvas.drawText("Altyazı alanını parmağınla çiz", width / 2f, 120f, textPaint)
+        if (dragging) {
+            getLocationOnScreen(loc)
+            val l = minOf(startX, curX) - loc[0]
+            val t = minOf(startY, curY) - loc[1]
+            val r = maxOf(startX, curX) - loc[0]
+            val b = maxOf(startY, curY) - loc[1]
+            canvas.drawRect(l, t, r, b, fillPaint)
+            canvas.drawRect(l, t, r, b, borderPaint)
+        }
+    }
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.action) {
+            MotionEvent.ACTION_DOWN -> {
+                startX = e.rawX; startY = e.rawY
+                curX = startX; curY = startY
+                dragging = true
+                invalidate()
+            }
+            MotionEvent.ACTION_MOVE -> {
+                curX = e.rawX; curY = e.rawY
+                invalidate()
+            }
+            MotionEvent.ACTION_UP -> {
+                dragging = false
+                val rect = Rect(
+                    minOf(startX, curX).toInt(),
+                    minOf(startY, curY).toInt(),
+                    maxOf(startX, curX).toInt(),
+                    maxOf(startY, curY).toInt()
+                )
+                if (rect.width() > 60 && rect.height() > 30) onSelected(rect) else onCancel()
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                dragging = false
+                onCancel()
+            }
+        }
+        return true
+    }
+}
