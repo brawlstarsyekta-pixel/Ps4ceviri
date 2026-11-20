@@ -68,6 +68,7 @@ dependencies {
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <queries>
+        <package android:name="com.playstation.remoteplay" />
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
@@ -133,9 +134,10 @@ class MainActivity : AppCompatActivity() {
                 ContextCompat.startForegroundService(this, i)
                 Toast.makeText(
                     this,
-                    "Başladı! Şimdi PS Remote Play'e geç",
+                    "Başladı! PS Remote Play açılıyor...",
                     Toast.LENGTH_LONG
                 ).show()
+                openRemotePlay()
             } else {
                 Toast.makeText(this, "Ekran yakalama izni verilmedi", Toast.LENGTH_LONG).show()
             }
@@ -161,7 +163,8 @@ class MainActivity : AppCompatActivity() {
         root.addView(tv("PS4 Altyazı Çeviri", 24f))
         root.addView(
             tv(
-                "İngilizce → Türkçe. BAŞLAT'a bas, sonra PS Remote Play'e geç. " +
+                "İngilizce → Türkçe. BAŞLAT'a bas: izinleri verince PS Remote Play kendiliğinden açılır. " +
+                    "PlayStation hesabınla orada giriş yapıp Remote Play'i başlat. " +
                     "Yüzen panelden SEÇ ile altyazı alanını çiz, ÇEVİR veya OTO ile çevir.",
                 14f
             )
@@ -190,6 +193,10 @@ class MainActivity : AppCompatActivity() {
         root.addView(Button(this).apply {
             text = "BAŞLAT"
             setOnClickListener { baslat() }
+        })
+        root.addView(Button(this).apply {
+            text = "PS REMOTE PLAY'İ AÇ"
+            setOnClickListener { openRemotePlay() }
         })
         root.addView(Button(this).apply {
             text = "DURDUR"
@@ -237,6 +244,21 @@ class MainActivity : AppCompatActivity() {
     private fun askProjection() {
         val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         projectionLauncher.launch(mpm.createScreenCaptureIntent())
+    }
+
+    private fun openRemotePlay() {
+        val pkg = "com.playstation.remoteplay"
+        val launch = packageManager.getLaunchIntentForPackage(pkg)
+        if (launch != null) {
+            startActivity(launch)
+        } else {
+            Toast.makeText(this, "PS Remote Play kurulu değil, Play Store açılıyor", Toast.LENGTH_LONG).show()
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$pkg")))
+            } catch (e: Exception) {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$pkg")))
+            }
+        }
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
