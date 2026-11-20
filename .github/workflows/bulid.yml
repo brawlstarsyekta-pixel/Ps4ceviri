@@ -1,0 +1,41 @@
+name: APK derle
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Proje dosyalarini olustur
+        run: |
+          python3 - <<'PY'
+          import re, os
+          text = open('proje.txt', encoding='utf-8').read()
+          parts = re.split(r'^=====DOSYA: (.+?)=====\r?\n', text, flags=re.M)
+          for i in range(1, len(parts), 2):
+              path = parts[i].strip()
+              os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+              open(path, 'w', encoding='utf-8', newline='\n').write(parts[i + 1])
+              print('olusturuldu:', path)
+          PY
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: APK derle
+        run: gradle assembleDebug --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PS4Ceviri-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
